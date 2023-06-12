@@ -370,14 +370,50 @@ class LeafNode extends BPlusNode {
     /**
      * Loads a leaf node from page `pageNum`.
      */
-    public static LeafNode fromBytes(BPlusTreeMetadata metadata, BufferManager bufferManager,
-                                     LockContext treeContext, long pageNum) {
+//    public static LeafNode fromBytes(BPlusTreeMetadata metadata, BufferManager bufferManager,
+//                                     LockContext treeContext, long pageNum) {
+//        // TODO(proj2): implement
+//        // Note: LeafNode has two constructors. To implement fromBytes be sure to
+//        // use the constructor that reuses an existing page instead of fetching a
+//        // brand new one.
+//
+//
+//
+//        return null;
+//    }
+    public static LeafNode fromBytes(BPlusTreeMetadata metadata, BufferManager bufferManager,LockContext treeContext, long pageNum) {
         // TODO(proj2): implement
         // Note: LeafNode has two constructors. To implement fromBytes be sure to
         // use the constructor that reuses an existing page instead of fetching a
         // brand new one.
 
-        return null;
+        //1. 缓冲区管理器
+        Page page = bufferManager.fetchPage(treeContext, pageNum);
+        Buffer buf = page.getBuffer();
+
+        //2. 读取数据
+        //a. the literal value 1 (1 byte) which indicates that this node is a leaf node,
+        byte nodeType = buf.get();
+        assert (nodeType == (byte) 1);
+
+        //b. the page id (8 bytes) of our right sibling (or -1 if we don't have a right sibling),
+        long rightSibling = buf.getLong();
+        Optional<Long> rightSiblingOptional = rightSibling == -1 ? Optional.empty() : Optional.of(rightSibling);
+
+        //c. the number (4 bytes) of (key, rid) pairs this leaf node contains,
+        int len = buf.getInt();
+
+        //d. the (key, rid) pairs themselves.
+        List<DataBox> keys = new ArrayList<>();
+        List<RecordId> rids = new ArrayList<>();
+        for (int i = 0; i < len; i++) {
+            //代表对key反序列化，key的类型多种多样
+            keys.add(DataBox.fromBytes(buf, metadata.getKeySchema()));
+            //代表对RecordId反序列化
+            rids.add(RecordId.fromBytes(buf));
+        }
+
+        return new LeafNode(metadata, bufferManager, page, keys, rids, rightSiblingOptional, treeContext);
     }
 
     // Builtins ////////////////////////////////////////////////////////////////
