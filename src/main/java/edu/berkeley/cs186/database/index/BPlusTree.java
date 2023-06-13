@@ -146,8 +146,7 @@ public class BPlusTree {
         LockUtil.ensureSufficientLockHeld(lockContext, LockType.NL);
 
         // TODO(proj2): implement
-
-        return Optional.empty();
+        return root.get(key).getKey(key);
     }
 
     /**
@@ -202,8 +201,7 @@ public class BPlusTree {
         LockUtil.ensureSufficientLockHeld(lockContext, LockType.NL);
 
         // TODO(proj2): Return a BPlusTreeIterator.
-
-        return Collections.emptyIterator();
+        return new BPlusTreeIterator(root.getLeftmostLeaf());
     }
 
     /**
@@ -235,8 +233,8 @@ public class BPlusTree {
         LockUtil.ensureSufficientLockHeld(lockContext, LockType.NL);
 
         // TODO(proj2): Return a BPlusTreeIterator.
-
-        return Collections.emptyIterator();
+        LeafNode startNode = root.get(key);
+        return new BPlusTreeIterator(startNode, key);
     }
 
     /**
@@ -257,9 +255,48 @@ public class BPlusTree {
         // Note: You should NOT update the root variable directly.
         // Use the provided updateRoot() helper method to change
         // the tree's root if the old root splits.
+        Optional<Pair<DataBox, Long>> pair = root.put(key, rid);
+        if (pair.isPresent()) {
+            // 新节点的key
+            List<DataBox> keys = new ArrayList<>();
+            keys.add(pair.get().getFirst());
 
+            // 新节点的root
+            List<Long> children = new ArrayList<>();
+            // 左孩子：旧root
+            children.add(root.getPage().getPageNum());
+            // 右孩子：
+            children.add(pair.get().getSecond());
+
+            // 新root
+            BPlusNode newRoot = new InnerNode(metadata, bufferManager, keys, children, lockContext);
+            updateRoot(newRoot);
+        }
         return;
     }
+
+    /**
+     * split the root with the new root has key
+     * this helper function is used by put and buldLoad
+     *                 newRoot
+     *                /       \
+     *               /         \
+     *        originalRoot    child(新增加的孩子节点)
+     *
+     * @param key : the key in the new root
+     * @param child : the right child of the newRoot
+     */
+    private void splitRoot(DataBox key, Long child) {
+        List<DataBox> keys = new ArrayList<>();
+        keys.add(key); // insert split_key into the new root
+
+        List<Long> children = new ArrayList<>();
+        children.add(root.getPage().getPageNum()); // left child : original root
+        children.add(child);                       // right child : new_split node
+        BPlusNode newRoot = new InnerNode(metadata, bufferManager, keys, children, lockContext);
+        updateRoot(newRoot);
+    }
+
 
     /**
      * Bulk loads data into the B+ tree. Tree should be empty and the data
@@ -286,7 +323,17 @@ public class BPlusTree {
         // Note: You should NOT update the root variable directly.
         // Use the provided updateRoot() helper method to change
         // the tree's root if the old root splits.
-
+        if (scanAll().hasNext()) {
+            throw new RuntimeException("bulkLoad must be called in an empty tree");
+        }
+        // 在这里不断插入数据
+        while (data.hasNext()) {
+            Optional<Pair<DataBox, Long>> pair = root.bulkLoad(data, fillFactor);
+            // 后序返回的结果有多余的数据
+            if(pair.isPresent()) {
+                splitRoot(pair.get().getFirst(), pair.get().getSecond());
+            }
+        }
         return;
     }
 
@@ -307,7 +354,7 @@ public class BPlusTree {
         LockUtil.ensureSufficientLockHeld(lockContext, LockType.NL);
 
         // TODO(proj2): implement
-
+        root.remove(key);
         return;
     }
 
@@ -422,18 +469,52 @@ public class BPlusTree {
     private class BPlusTreeIterator implements Iterator<RecordId> {
         // TODO(proj2): Add whatever fields and constructors you want here.
 
+        // 外层循环指针：节点迭代器
+        LeafNode currNode;
+        // 内层循环指针：记录迭代器
+        Iterator<RecordId> currRecord;
+
+        BPlusTreeIterator(LeafNode node) {
+            currNode = node;
+            currRecord = node.scanAll();
+        }
+
+        BPlusTreeIterator(LeafNode node, DataBox key) {
+            currNode = node;
+            currRecord = node.scanGreaterEqual(key);
+        }
+
         @Override
         public boolean hasNext() {
             // TODO(proj2): implement
-
-            return false;
+            if (currRecord.hasNext()) {
+                return true;
+            }
+            // 如果当前节点的记录迭代器没有下一个元素，就要判断是否有下一个节点
+            else {
+                // 如果当前节点有下一个节点，就要更新当前节点和记录迭代器
+                Optional<LeafNode> nextNode = currNode.getRightSibling();
+                if (nextNode.isPresent()) {
+                    currNode = nextNode.get();
+                    currRecord = currNode.scanAll();
+                    return true;
+                }
+                // 下一个节点不在
+                else {
+                    return false;
+                }
+            }
         }
 
         @Override
         public RecordId next() {
             // TODO(proj2): implement
-
-            throw new NoSuchElementException();
+            if (currRecord.hasNext()) {
+                return currRecord.next();
+            }
+            else {
+                throw new NoSuchElementException();
+            }
         }
     }
 }

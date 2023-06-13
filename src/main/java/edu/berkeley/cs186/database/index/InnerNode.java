@@ -9,6 +9,7 @@ import edu.berkeley.cs186.database.memory.BufferManager;
 import edu.berkeley.cs186.database.memory.Page;
 import edu.berkeley.cs186.database.table.RecordId;
 
+import javax.swing.text.html.Option;
 import java.nio.ByteBuffer;
 import java.util.*;
 
@@ -82,7 +83,10 @@ class InnerNode extends BPlusNode {
     public LeafNode get(DataBox key) {
         // TODO(proj2): implement
 
-        return null;
+        // B+树的一个node代表一个page
+        // 找到比其小的node即为目标节点
+        BPlusNode child = BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(numLessThanEqual(key, keys)));
+        return child.get(key);
     }
 
     // See BPlusNode.getLeftmostLeaf.
@@ -90,32 +94,105 @@ class InnerNode extends BPlusNode {
     public LeafNode getLeftmostLeaf() {
         assert(children.size() > 0);
         // TODO(proj2): implement
-
-        return null;
+        BPlusNode LeftmostChild = BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(0));
+        return LeftmostChild.getLeftmostLeaf();
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
         // TODO(proj2): implement
+        // 1. 找到比其小的node即为目标节点，后序处理
+        BPlusNode child = BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(numLessThanEqual(key, keys)));
+        Optional<Pair<DataBox, Long>> childPair = child.put(key, rid);
 
-        return Optional.empty();
+        // 2. 如果child不存在，则直接返回
+        if (!childPair.isPresent()) {
+            return childPair;
+        }
+
+        // 3. 如果child存在，则需要进行分裂
+        else {
+            // 3.1 插入childPair
+            Pair<DataBox, Long> pair = childPair.get();
+            int index = numLessThanEqual(pair.getFirst(), keys);
+            keys.add(index, pair.getFirst());
+            children.add(index + 1, pair.getSecond());
+
+            if (keys.size() <= 2 * metadata.getOrder()) {
+                sync();
+                return Optional.empty();
+            }
+            else {
+                DataBox splitKey = keys.get(metadata.getOrder());
+                // 3.2 右边：[d + 1, 2d + 1]
+                List<DataBox> rightKeys = keys.subList(metadata.getOrder() + 1, keys.size());
+                List<Long> rightChildren = children.subList(metadata.getOrder() + 1, children.size());
+                // 3.3 左边：[0, d + 1)
+                keys = keys.subList(0, metadata.getOrder());
+                children = children.subList(0, metadata.getOrder() + 1);
+                sync();
+
+                // 3.4 创建新的innerNode
+                InnerNode rightNode = new InnerNode(metadata, bufferManager, rightKeys, rightChildren, treeContext);
+                return Optional.of(new Pair<>(splitKey, rightNode.getPage().getPageNum()));
+            }
+        }
     }
 
     // See BPlusNode.bulkLoad.
     @Override
-    public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
-            float fillFactor) {
+    public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data, float fillFactor) {
         // TODO(proj2): implement
+        BPlusNode rightMostChild = BPlusNode.fromBytes(metadata, bufferManager, treeContext, children.get(children.size() - 1));
+        Optional<Pair<DataBox, Long>> childPair = rightMostChild.bulkLoad(data, fillFactor);
 
-        return Optional.empty();
+        // 1. 如果child不存在，则直接返回
+        if (!childPair.isPresent()) {
+            return childPair;
+        }
+
+        // 2. 分裂
+        DataBox splitKey = childPair.get().getFirst();
+        Long child = childPair.get().getSecond();
+        Optional<Pair<DataBox, Long>> pair = insert(splitKey, child);
+        if (!pair.isPresent()) {
+            return bulkLoad(data, fillFactor);
+        } else {
+            return pair;
+        }
+    }
+
+    private Optional<Pair<DataBox, Long>> insert(DataBox key, Long child) {
+        int index = InnerNode.numLessThan(key, keys);
+        keys.add(index, key);
+        children.add(index + 1, child);
+
+        if (keys.size() <= metadata.getOrder() * 2) {
+            // Case 1: If inserting the pair (k, c) does NOT cause leaf to overflow, Optional.empty() is returned.
+            sync();
+            return Optional.empty();
+        } else {
+            // Case 2: If inserting the pair (k, c) does cause the node n to overflow, a pair (split_key, right_node_page_num) is returned.
+            DataBox splitKey = keys.get(metadata.getOrder());
+            List<DataBox> rightKeys = keys.subList(metadata.getOrder() + 1, keys.size());
+            List<Long> rightChildren = children.subList(metadata.getOrder() + 1, children.size());
+
+            keys = keys.subList(0, metadata.getOrder());
+            children = children.subList(0, metadata.getOrder() + 1);
+            sync();
+
+            InnerNode rightNode = new InnerNode(metadata, bufferManager, rightKeys, rightChildren, treeContext);
+            return Optional.of(new Pair<>(splitKey, rightNode.getPage().getPageNum()));
+        }
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
         // TODO(proj2): implement
-
+        LeafNode leaf = get(key);
+        leaf.remove(key);
         return;
     }
 

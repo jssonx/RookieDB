@@ -147,40 +147,98 @@ class LeafNode extends BPlusNode {
     @Override
     public LeafNode get(DataBox key) {
         // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.getLeftmostLeaf.
     @Override
     public LeafNode getLeftmostLeaf() {
         // TODO(proj2): implement
-
-        return null;
+        return this;
     }
 
     // See BPlusNode.put.
     @Override
     public Optional<Pair<DataBox, Long>> put(DataBox key, RecordId rid) {
         // TODO(proj2): implement
+        // 1. 重复：重复键不插入
+        if (keys.contains(key)) {
+            throw new BPlusTreeException("Insert duplicate entries with the same key");
+        }
 
-        return Optional.empty();
+        // 2. 插入：找到比其小的node即为目标节点
+        int index = InnerNode.numLessThanEqual(key, keys);
+        keys.add(index, key);
+        rids.add(index, rid);
+
+        // 3. 检查是否需要分裂
+        if (keys.size() > 2 * metadata.getOrder()) {
+            // 3.1 分裂
+            int mid = metadata.getOrder();
+            // 3.1.1 右边：[d, 2d + 1)，d + 1个
+            List<DataBox> rightKeys = keys.subList(mid, keys.size());
+            List<RecordId> rightRids = rids.subList(mid, rids.size());
+            // 3.1.2 左边：[0, d)，d个
+            keys = keys.subList(0, mid);
+            rids = rids.subList(0, mid);
+
+            // 3.2 创建新的右节点
+            LeafNode rightNode = new LeafNode(metadata, bufferManager, rightKeys, rightRids, rightSibling, treeContext);
+            rightSibling = Optional.of(rightNode.getPage().getPageNum());
+            sync();
+
+            // 3.3 返回分裂的节点
+            return Optional.of(new Pair<>(rightKeys.get(0), rightNode.getPage().getPageNum()));
+        }
+        else {
+            // 3.4 不需要分裂
+            sync();
+            return Optional.empty();
+        }
     }
 
     // See BPlusNode.bulkLoad.
     @Override
-    public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data,
-            float fillFactor) {
+    public Optional<Pair<DataBox, Long>> bulkLoad(Iterator<Pair<DataBox, RecordId>> data, float fillFactor) {
         // TODO(proj2): implement
+        // 1. 读取数据
+        int maxRecords = (int) Math.ceil(2 * metadata.getOrder() * fillFactor);
 
-        return Optional.empty();
+        // 2. 插入数据
+        while (data.hasNext() && keys.size() < maxRecords) {
+            Pair<DataBox, RecordId> pair = data.next(); // //代表拿到一个迭代器中的一个元素，插入到当前叶节点之中
+            keys.add(pair.getFirst());
+            rids.add(pair.getSecond());
+        }
+
+        // 3. 检查是否需要分裂
+        Optional<Pair<DataBox, Long>> ret = Optional.empty();
+        if (data.hasNext()) {
+            List<DataBox> rightKeys = new ArrayList<>();
+            List<RecordId> rightRids = new ArrayList<>();
+
+            Pair<DataBox, RecordId> pair = data.next();
+            rightKeys.add(pair.getFirst());
+            rightRids.add(pair.getSecond());
+
+            LeafNode rightNode = new LeafNode(metadata, bufferManager, rightKeys, rightRids, rightSibling, treeContext);
+            rightSibling = Optional.of(rightNode.getPage().getPageNum());
+            ret = Optional.of(new Pair<>(rightKeys.get(0), rightNode.getPage().getPageNum()));
+        }
+        sync();
+        return ret;
     }
 
     // See BPlusNode.remove.
     @Override
     public void remove(DataBox key) {
         // TODO(proj2): implement
-
+        int index = keys.indexOf(key);
+        if (index >= 0) {
+            keys.remove(index);
+            rids.remove(index);
+            sync();
+        }
         return;
     }
 
@@ -370,17 +428,6 @@ class LeafNode extends BPlusNode {
     /**
      * Loads a leaf node from page `pageNum`.
      */
-//    public static LeafNode fromBytes(BPlusTreeMetadata metadata, BufferManager bufferManager,
-//                                     LockContext treeContext, long pageNum) {
-//        // TODO(proj2): implement
-//        // Note: LeafNode has two constructors. To implement fromBytes be sure to
-//        // use the constructor that reuses an existing page instead of fetching a
-//        // brand new one.
-//
-//
-//
-//        return null;
-//    }
     public static LeafNode fromBytes(BPlusTreeMetadata metadata, BufferManager bufferManager,LockContext treeContext, long pageNum) {
         // TODO(proj2): implement
         // Note: LeafNode has two constructors. To implement fromBytes be sure to
