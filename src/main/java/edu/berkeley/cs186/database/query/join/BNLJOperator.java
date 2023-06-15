@@ -87,6 +87,9 @@ public class BNLJOperator extends JoinOperator {
          */
         private void fetchNextLeftBlock() {
             // TODO(proj3_part1): implement
+            leftBlockIterator = QueryOperator.getBlockIterator(leftSourceIterator, getLeftSource().getSchema(), numBuffers - 2);
+            leftBlockIterator.markNext(); // 注意这里是对Block内的record回溯
+            leftRecord = leftBlockIterator.next();
         }
 
         /**
@@ -101,6 +104,9 @@ public class BNLJOperator extends JoinOperator {
          */
         private void fetchNextRightPage() {
             // TODO(proj3_part1): implement
+            if (!rightSourceIterator.hasNext()) return;
+            rightPageIterator = QueryOperator.getBlockIterator(rightSourceIterator, getRightSource().getSchema(), 1);
+            rightPageIterator.markNext(); // 注意这里是对Page内的record回溯
         }
 
         /**
@@ -111,9 +117,58 @@ public class BNLJOperator extends JoinOperator {
          * function directly from this file, since BNLJOperator is a subclass
          * of JoinOperator).
          */
+        /* 循环方式
+        * for：leftSourceIterator的block
+        *   for：rightSourceIterator的page
+        *     for：leftBlockIterator内部的leftRecord:bufferNums-2个page
+        *       for：rightPageIterator内部的rightRecord：1个page
+        *            yield join
+        */
         private Record fetchNextRecord() {
             // TODO(proj3_part1): implement
-            return null;
+            Record rightRecord;
+            while (true) {
+                // for：rightPageIterator
+                if (rightPageIterator.hasNext()) {
+                    // 外层迭代：++
+                    rightRecord = rightPageIterator.next();
+                    
+                    // 符合条件：连接记录
+                    if (compare(leftRecord, rightRecord) == 0) return leftRecord.concat(rightRecord);
+                } 
+                
+                //for：leftBlockIterator
+                else if (leftBlockIterator.hasNext()) {
+                    // 外层迭代：++
+                    leftRecord = leftBlockIterator.next();
+                    
+                    // 内层重置：初始值
+                    rightPageIterator.reset();
+                } 
+                
+                //for：rightSourceIterator
+                else if (rightSourceIterator.hasNext()) {
+                    // 外层迭代：++
+                    fetchNextRightPage();
+                    
+                    // 内层重置
+                    leftBlockIterator.reset();
+                    leftRecord = leftBlockIterator.next();
+                }
+
+                // for：leftSourceIterator
+                else if (leftSourceIterator.hasNext()) {
+                    // 外层迭代：++
+                    fetchNextLeftBlock();
+                    
+                    // 内层重置
+                    rightSourceIterator.reset();
+                    fetchNextRightPage();
+                }
+                else {
+                    return null;
+                }
+            }
         }
 
         /**
